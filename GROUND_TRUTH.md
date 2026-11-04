@@ -1,7 +1,7 @@
 # repo-vibe — Ground Truth
 
 **Last verified:** 2026-11-01 (live API state; audit evidence 2026-10-29)
-**Canonical branch:** main @ 9f7a3bfefd
+**Canonical branch:** main @ 5e9151f824
 
 ## What this repo is
 
@@ -12,7 +12,7 @@ Python; self-hostable.
 
 ## Verified current state
 
-- **Head:** `9f7a3bfefd` — unchanged from the audit freeze. Tree = 8 blobs.
+- **Head:** `5e9151f824` — unchanged from the audit freeze. Tree = 9 blobs.
 - **Open PRs:** none.
 - **Tests:** `pytest test_repo_vibe.py` → **4 passed, 0 failed**
   (audit lane run, reproduced): mood classification, milestone ladder,
