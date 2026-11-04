@@ -27,33 +27,22 @@ Add this to any `README.md`:
 ![Repo-Vibe Dashboard](https://YOUR-DEPLOYMENT/badge/OWNER/REPO)
 ```
 
-Public repos work with zero setup. For private repos and push-fresh badges,
-install **Repo-Vibe as a GitHub App** (read-only: contents, actions, metadata,
-pull requests — it cannot write to your code).
+Public badges use only the unauthenticated public API. Private repositories return 404 even if installation credentials are configured. A visibility check runs before every cached response; upstream errors do not serve old cached data.
 
-## Run your own (it's open source)
+## Run your own
 
 ```bash
-python3 app.py            # stdlib only, plus `cryptography` for App JWT auth
-# GET  /                       health
-# GET  /badge/<owner>/<repo>   the SVG
-# POST /webhook                push events refresh the badge (HMAC verified)
-# GET  /setup                  one-click GitHub App creation (manifest flow)
+python3 app.py
+# GET /badge/<owner>/<repo> — public repository SVG
+# POST /webhook — optional HMAC-verified push invalidation
+python3 -m pytest -q
 ```
 
-### Create the GitHub App (manifest flow)
+Cache entries expire after five minutes or at the UTC day boundary, with at most 256 entries. Public GitHub API quotas limit this to a small self-hosted service. A deployment and actual usage are not yet verified.
 
-GitHub does **not** let an API create a GitHub App unattended — a human has to
-confirm it in the browser. Repo-Vibe makes that a one-click formality:
+Automatic App setup is disabled: the old callback exchanged a one-time manifest code but discarded its returned credentials. `/setup`, `/manifest` and `/setup/callback` now return 410 without contacting GitHub. Existing manually configured signed push webhooks remain supported. Configure `WEBHOOK_SECRET` for those; no secret belongs in source control.
 
-1. Deploy/run this server with a public `PUBLIC_URL`.
-2. Open `/setup`, click **Create Repo-Vibe GitHub App**. GitHub shows the name
-   and read-only permissions; confirm.
-3. GitHub redirects to `/setup/callback`; the server exchanges the one-time
-   code and tells you exactly what to save.
-4. Save the App ID, PEM private key and webhook secret into your secret store,
-   set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `WEBHOOK_SECRET`,
-   restart. Done — installs now feed the badge via installation tokens.
+Activity sums at most the latest 30 commits from today. Individual commit failures can leave that activity count partial in the current core fetcher. A failed CI lookup can display NO CI RUNS. These data-quality limits remain open and prevent treating the badge as an authoritative complete activity or CI report.
 
 Offline / receipt mode (render from a captured API response):
 
