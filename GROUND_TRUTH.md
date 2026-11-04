@@ -10,8 +10,8 @@ Cache entries expire after 300 seconds and at the UTC day boundary, bounded to 2
 
 The old GitHub App manifest callback consumed a one-time conversion but discarded returned credentials. Automatic setup routes now return 410 before any network request. Existing signed push-webhook invalidation still works. No live credentials were exchanged during verification.
 
-Original baseline: 4 pytest tests passed. Final: 13 passed, 0 failed. Raw evidence is under evidence/privacy-20261104/. Regression controls cover visibility changes, private cache exclusion, unauthenticated statistics, expiry, midnight, bounds, path validation, payload admission and one-time setup-code preservation.
+Original baseline: 4 pytest tests passed. The privacy repair finished with 13 passed, 0 failed. A follow-up data-quality repair adds 4 focused regressions: failed or malformed commit details never produce a partial line total, CI lookup failure stays distinct from a successful empty workflow list, and the 30-commit ceiling is labeled as a sample. Current local result: 17 passed, 0 failed. Raw privacy evidence is under evidence/privacy-20261104/ and evidence/data-quality-20261104-local.txt.
 
 ## Remaining limits
 
-No hosted deployment, installation, customer or revenue is verified. Public API quota and single-process HTTP serving limit scale. Activity still samples at most 30 daily commits; individual detail-fetch errors may yield partial totals, and CI lookup failure currently can display NO CI RUNS. These core data-quality limits are open. This is a verified privacy/operability repair, not completed commercial productization.
+No hosted deployment, installation, customer or revenue is verified. Public API quota and single-process HTTP serving limit scale. Activity is still capped at 30 daily commits and explicitly labeled as a sample at the cap. Detail-fetch failures now suppress the line total; CI lookup failures now display UNKNOWN. This is a verified privacy and data-quality repair, not completed commercial productization.

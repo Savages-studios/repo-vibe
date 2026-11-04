@@ -43,31 +43,45 @@ def next_milestone(stars):
     return ((stars // 10000) + 1) * 10000
 
 def fetch_stats(owner, repo, token=None):
-    """Live stats: stars, lines changed today (UTC), latest build, last messages."""
+    """Live stats. Daily activity is bounded to 30 commits and fails closed."""
     info = _get(f"/repos/{owner}/{repo}", token)
     since = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
     commits = _get(f"/repos/{owner}/{repo}/commits?per_page=30&since={since}", token) or []
     lines = 0
+    activity_complete = True
     for c in commits:
         try:
             full = _get(f"/repos/{owner}/{repo}/commits/{c['sha']}", token)
-            lines += int(full.get("stats", {}).get("total", 0))
+            stats = full.get("stats") if isinstance(full, dict) else None
+            total = stats.get("total") if isinstance(stats, dict) else None
+            if not isinstance(total, int) or total < 0:
+                raise ValueError("commit line statistics unavailable")
+            lines += total
         except Exception:
-            pass
+            # Never turn a partial sum into a plausible-looking total.
+            activity_complete = False
     messages = [c["commit"]["message"].splitlines()[0] for c in commits[:3]]
-    build = "NO CI RUNS"
+    build = "UNKNOWN"
     try:
         runs = _get(f"/repos/{owner}/{repo}/actions/runs?per_page=1", token)
-        wr = (runs.get("workflow_runs") or [])
-        if wr:
+        wr = runs.get("workflow_runs") if isinstance(runs, dict) else None
+        if not isinstance(wr, list):
+            build = "UNKNOWN"
+        elif wr:
             build = (wr[0].get("conclusion") or wr[0].get("status") or "unknown").upper()
+        else:
+            build = "NO CI RUNS"
     except Exception:
-        pass
+        # A failed lookup is not evidence that the repository has no CI.
+        build = "UNKNOWN"
     return {
         "owner": owner, "repo": repo,
         "stars": int(info.get("stargazers_count", 0)),
-        "lines_today": lines,
+        "lines_today": lines if activity_complete else None,
         "commits_today": len(commits),
+        "activity_status": "INCOMPLETE" if not activity_complete else (
+            "SAMPLED" if len(commits) == 30 else "COMPLETE"
+        ),
         "build": build,
         "messages": messages,
     }
@@ -81,6 +95,10 @@ def render_svg(stats, theme="neon-dark"):
     pct = max(2, min(100, round(100 * stars / goal))) if goal else 2
     mood, mood_color = mood_for(stats.get("messages", []))
     build = stats.get("build", "UNKNOWN")
+    activity_status = stats.get("activity_status", "COMPLETE")
+    activity_label = "LATEST 30 COMMITS" if activity_status == "SAMPLED" else "LINES TODAY (UTC)"
+    lines_today = stats.get("lines_today")
+    activity_value = "UNAVAILABLE" if lines_today is None else str(lines_today)
     build_color = "#39ff88" if build == "SUCCESS" else "#ffb347" if build in ("NO CI RUNS", "UNKNOWN") else "#ff5470"
     bar_w = round(3.6 * pct)  # 360px bar
     title = esc(f"{stats['owner']}/{stats['repo']}")
@@ -96,7 +114,7 @@ def render_svg(stats, theme="neon-dark"):
   <rect width="480" height="200" rx="10" fill="#0a0f0a"/>
   <rect width="480" height="200" rx="10" fill="url(#scan)"/>
   <text x="20" y="30" font-family="monospace" font-size="15" fill="#39ff88">&#9654; {title}</text>
-  <text x="20" y="58" font-family="monospace" font-size="13" fill="#c8ffd8">LINES CHANGED TODAY : {stats["lines_today"]}  ({stats["commits_today"]} commits)</text>
+  <text x="20" y="58" font-family="monospace" font-size="13" fill="#c8ffd8">{activity_label}: {activity_value}  ({stats["commits_today"]} commits)</text>
   <text x="20" y="80" font-family="monospace" font-size="13" fill="{build_color}">BUILD STATUS        : {esc(build)}</text>
   <text x="20" y="102" font-family="monospace" font-size="13" fill="{mood_color}">LAST CONTRIBUTOR MOOD: {mood}</text>
   <text x="20" y="132" font-family="monospace" font-size="13" fill="#ffe74d">&#9733; STAR METER  {stars} / {goal}</text>
