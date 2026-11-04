@@ -2,9 +2,7 @@
 
 Endpoints
   GET  /                        health + install pitch
-  GET  /badge/<owner>/<repo>   live animated SVG (uses an installation token
-                                when the App is installed on that account,
-                                otherwise falls back to unauthenticated public API)
+  GET  /badge/<owner>/<repo>   live animated SVG using public GitHub data only
   POST /webhook                 GitHub App webhooks (HMAC-SHA256 verified);
                                 push events refresh the badge cache
   GET  /manifest                the GitHub App manifest JSON
@@ -18,7 +16,7 @@ Endpoints
 Config (environment, never committed):
   GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH, WEBHOOK_SECRET, PORT (default 8080)
 """
-import base64, hashlib, hmac, json, os, time, urllib.request
+import base64, hashlib, hmac, json, os, re, time, urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -26,7 +24,10 @@ import repo_vibe
 
 APP_NAME = os.environ.get("REPO_VIBE_APP_NAME", "Repo-Vibe")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8080")
-_cache = {}          # (owner, repo) -> svg string
+_cache = {}          # (owner, repo) -> (monotonic expiry, UTC day, svg)
+CACHE_TTL_SECONDS = 300
+MAX_CACHE_ENTRIES = 256
+MAX_WEBHOOK_BYTES = 1024 * 1024
 _installations = {}  # account_login -> installation_id (learned from webhooks)
 
 # ---------- GitHub App auth ----------
@@ -97,60 +98,76 @@ class H(BaseHTTPRequestHandler):
         u = urlparse(self.path); q = parse_qs(u.query)
         if u.path == "/":
             self._send(200, f"<h1>Repo-Vibe</h1><p>The vibe for your repo. "
-                            f"App server is live.</p><p><a href='/setup'>Create the GitHub App (manifest flow)</a></p>")
-        elif u.path == "/manifest":
-            self._send(200, json.dumps(manifest(), indent=2), "application/json")
-        elif u.path == "/setup":
-            m = json.dumps(manifest()).replace('"', "&quot;")
-            self._send(200, f"""<h1>Create Repo-Vibe on GitHub</h1>
-<p>Clicking this posts the manifest to GitHub. GitHub shows you the App name and
-permissions and asks <b>you</b> to confirm - that human click is required by GitHub.</p>
-<form action="https://github.com/settings/apps/new" method="post">
-  <input type="hidden" name="manifest" value="{m}">
-  <input type="submit" value="Create Repo-Vibe GitHub App">
-</form>""")
-        elif u.path == "/setup/callback":
-            code = (q.get("code") or [""])[0]
-            if not code:
-                return self._send(400, "missing ?code=")
-            try:
-                conv = api(f"/app-manifests/{code}/conversions", method="POST")
-            except Exception as e:
-                return self._send(502, f"conversion failed: {e}")
-            # Never print the private key / webhook secret into logs or chat.
-            safe = {k: conv.get(k) for k in ("id", "slug", "name", "html_url", "owner")}
-            self._send(200, f"<h1>App created</h1><pre>{json.dumps(safe, indent=2)}</pre>"
-                            "<p>GitHub returned the App id, slug, webhook secret, client "
-                            "credentials and PEM private key in this one-time conversion. "
-                            "Save them into your secret store NOW (the PEM is shown once), "
-                            "then set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH and "
-                            "WEBHOOK_SECRET for this server and restart it.</p>")
+                            f"App server is live.</p><p>Public repository badges. Optional signed push webhook.</p>")
+        elif u.path in ("/manifest", "/setup", "/setup/callback"):
+            self._send(410, "Automatic GitHub App setup is unavailable. "
+                       "Public badges use public repository data only. "
+                       "Configure an optional signed repository webhook manually.", "text/plain")
         elif u.path.startswith("/badge/"):
             parts = u.path.strip("/").split("/")
             if len(parts) != 3:
                 return self._send(400, "use /badge/<owner>/<repo>", "text/plain")
             _, owner, repo = parts
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", owner) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repo) or repo in (".", ".."):
+                return self._send(400, "invalid repository name", "text/plain")
             key = (owner, repo)
-            if key not in _cache:
-                stats = repo_vibe.fetch_stats(owner, repo, token_for(owner))
-                _cache[key] = repo_vibe.render_svg(stats)
-            self._send(200, _cache[key], "image/svg+xml")
+            # This endpoint is public: neither a privileged installation token
+            # nor previously cached data may disclose a private repository.
+            try:
+                info = api(f"/repos/{owner}/{repo}")
+                if info.get("private") is not False:
+                    _cache.pop(key, None)
+                    return self._send(404, "repository not found", "text/plain")
+                now = time.monotonic()
+                day = time.strftime("%Y-%m-%d", time.gmtime())
+                cached = _cache.get(key)
+                if cached is None or cached[0] <= now or cached[1] != day:
+                    _cache.pop(key, None)
+                    stats = repo_vibe.fetch_stats(owner, repo, None)
+                    if len(_cache) >= MAX_CACHE_ENTRIES:
+                        _cache.pop(next(iter(_cache)))
+                    _cache[key] = (now + CACHE_TTL_SECONDS, day, repo_vibe.render_svg(stats))
+            except urllib.error.HTTPError as exc:
+                _cache.pop(key, None)
+                status = 404 if exc.code == 404 else 503
+                return self._send(status, "repository unavailable", "text/plain")
+            except Exception:
+                _cache.pop(key, None)
+                return self._send(503, "repository unavailable", "text/plain")
+            self._send(200, _cache[key][2], "image/svg+xml")
         else:
             self._send(404, "not found", "text/plain")
 
     def do_POST(self):
         u = urlparse(self.path)
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
         if u.path != "/webhook":
             return self._send(404, "not found", "text/plain")
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except (TypeError, ValueError):
+            return self._send(400, "invalid content length", "text/plain")
+        if length < 0:
+            return self._send(400, "invalid content length", "text/plain")
+        if length > MAX_WEBHOOK_BYTES:
+            return self._send(413, "payload too large", "text/plain")
+        if self.headers.get("Transfer-Encoding"):
+            return self._send(400, "unsupported transfer encoding", "text/plain")
+        body = self.rfile.read(length)
         secret = os.environ.get("WEBHOOK_SECRET", "")
         sig = self.headers.get("X-Hub-Signature-256", "")
         expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         if not secret or not hmac.compare_digest(sig, expected):
             return self._send(401, "bad signature", "text/plain")
         event = self.headers.get("X-GitHub-Event", "")
-        payload = json.loads(body or b"{}")
+        try:
+            payload = json.loads(body or b"{}")
+            if not isinstance(payload, dict):
+                raise ValueError("object required")
+            for field in ("installation", "repository"):
+                if field in payload and not isinstance(payload[field], dict):
+                    raise ValueError("invalid event")
+        except (ValueError, UnicodeError):
+            return self._send(400, "invalid event", "text/plain")
         if event in ("installation", "installation_repositories"):
             inst = payload.get("installation", {})
             acct = (inst.get("account") or {}).get("login")
