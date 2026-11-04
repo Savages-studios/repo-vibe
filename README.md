@@ -42,7 +42,7 @@ Cache entries expire after five minutes or at the UTC day boundary, with at most
 
 Automatic App setup is disabled: the old callback exchanged a one-time manifest code but discarded its returned credentials. `/setup`, `/manifest` and `/setup/callback` now return 410 without contacting GitHub. Existing manually configured signed push webhooks remain supported. Configure `WEBHOOK_SECRET` for those; no secret belongs in source control.
 
-Activity sums at most the latest 30 commits from today. Individual commit failures can leave that activity count partial in the current core fetcher. A failed CI lookup can display NO CI RUNS. These data-quality limits remain open and prevent treating the badge as an authoritative complete activity or CI report.
+Activity is bounded to the latest 30 commits from today (UTC), and the badge labels that result as a sample at the cap. If any commit detail cannot be fetched, the line-change total is shown as unavailable rather than as a partial sum. A failed CI lookup displays UNKNOWN; NO CI RUNS is reserved for a successful lookup with an empty workflow list. Counts below the cap cover all commits returned for the current UTC day. This remains a bounded public-repository badge, not an authoritative audit or complete activity report.
 
 Offline / receipt mode (render from a captured API response):
 
