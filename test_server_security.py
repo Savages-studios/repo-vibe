@@ -17,11 +17,13 @@ def setup_function():
 
 
 def test_public_badge_uses_only_public_data():
-    with patch.object(app, "api", return_value={"private": False}), \
-         patch.object(app, "token_for", return_value="synthetic-privileged-token"), \
+    with patch.object(app, "api", return_value={"private": False}) as visibility, \
+         patch.object(app, "token_for", return_value="synthetic-privileged-token") as token_for, \
          patch.object(app.repo_vibe, "fetch_stats", return_value={"public": True}) as fetch, \
          patch.object(app.repo_vibe, "render_svg", return_value="<svg/>"):
         assert request() == (200, "<svg/>")
+        visibility.assert_called_once_with("/repos/example/project")
+        token_for.assert_not_called()
         fetch.assert_called_once_with("example", "project", None)
 
 
