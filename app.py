@@ -121,10 +121,10 @@ class H(BaseHTTPRequestHandler):
                 # credentials or upstream response bodies.
                 if not isinstance(stats, dict):
                     return self._send(503, "stats unavailable", "text/plain")
-                allowed = {"stars", "build_status", "mood", "lines_changed_today",
-                           "commit_count", "sampled", "status", "repo"}
+                allowed = {"stars", "build", "lines_today", "commits_today", "activity_status"}
                 result = {k: v for k, v in stats.items()
                           if k in allowed and (v is None or type(v) in (str,int,float,bool))}
+                result["mood"] = repo_vibe.mood_for(stats.get("messages", []))[0]
                 result["schema"] = "repo-vibe.public-status.v1"
                 result["repository"] = owner + "/" + repo
                 return self._send(200, json.dumps(result, sort_keys=True, allow_nan=False), "application/json")
