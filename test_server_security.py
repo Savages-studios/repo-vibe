@@ -1,3 +1,4 @@
+import os
 from unittest.mock import patch
 from urllib.error import HTTPError
 import app
@@ -17,14 +18,25 @@ def setup_function():
 
 
 def test_public_badge_uses_only_public_data():
-    with patch.object(app, "api", return_value={"private": False}) as visibility, \
-         patch.object(app, "token_for", return_value="synthetic-privileged-token") as token_for, \
+    # Even with a privileged-looking token sitting in the environment, the
+    # badge path must not use it: stats are fetched with token None, always.
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "synthetic-privileged-token"}), \
+         patch.object(app, "api", return_value={"private": False}) as visibility, \
          patch.object(app.repo_vibe, "fetch_stats", return_value={"public": True}) as fetch, \
          patch.object(app.repo_vibe, "render_svg", return_value="<svg/>"):
         assert request() == (200, "<svg/>")
         visibility.assert_called_once_with("/repos/example/project")
-        token_for.assert_not_called()
         fetch.assert_called_once_with("example", "project", None)
+
+
+def test_retired_app_auth_machinery_is_gone():
+    # The GitHub App auth path (App JWT, installation tokens, env-token
+    # fallback) and the App manifest builder were dead code since the setup
+    # flow was retired behind 410 responses. They stay removed: no token
+    # code path exists in the server to wire back up.
+    for name in ("make_jwt", "installation_token", "token_for", "manifest",
+                 "_installations"):
+        assert not hasattr(app, name), name
 
 
 def test_inaccessible_repository_never_returns_cached_badge():

@@ -21,13 +21,6 @@ def test_svg_is_valid_xml_with_real_numbers():
     ET.fromstring(svg)  # raises if malformed
     assert "8151" in svg and "SUCCESS" in svg and "Star Meter" in svg or "STAR METER" in svg
 
-def test_manifest_shape():
-    m = app.manifest()
-    assert m["default_permissions"]["contents"] == "read"
-    assert "push" in m["default_events"]
-    assert m["hook_attributes"]["url"].endswith("/webhook")
-    assert m["redirect_url"].endswith("/setup/callback")
-
 if __name__ == "__main__":
-    test_mood(); test_milestone(); test_svg_is_valid_xml_with_real_numbers(); test_manifest_shape()
+    test_mood(); test_milestone(); test_svg_is_valid_xml_with_real_numbers()
     print("all tests passed")

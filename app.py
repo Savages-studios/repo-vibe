@@ -1,22 +1,23 @@
-"""Repo-Vibe GitHub App server (stdlib HTTP + `cryptography` for App JWT).
+"""Repo-Vibe badge server (stdlib HTTP only).
 
 Endpoints
   GET  /                        health + install pitch
   GET  /badge/<owner>/<repo>   live animated SVG using public GitHub data only
-  POST /webhook                 GitHub App webhooks (HMAC-SHA256 verified);
+  POST /webhook                 signed webhooks (HMAC-SHA256 verified);
                                 push events refresh the badge cache
-  GET  /manifest                the GitHub App manifest JSON
-  GET  /setup                   one-click manifest-flow page: posts the manifest
-                                to github.com/settings/apps/new in YOUR browser,
-                                where you confirm creation (GitHub requires a
-                                human click there - no API bypass exists)
-  GET  /setup/callback?code=    exchanges the manifest code for the new App's
-                                credentials and tells you exactly what to save
+  GET  /manifest, /setup, /setup/callback
+                                retired GitHub App setup flow: all return 410
+
+The GitHub App auth machinery (App JWT, installation tokens, the manifest
+builder) was removed 2026-11-09: the setup flow has been retired since the
+410 responses landed, the functions had no live callers, and the badge path
+is public-data-only by design — it never receives any token. There is no
+token code path left in this file to wire back up.
 
 Config (environment, never committed):
-  GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH, WEBHOOK_SECRET, PORT (default 8080)
+  WEBHOOK_SECRET, PORT (default 8080)
 """
-import base64, hashlib, hmac, json, os, re, time, urllib.request, urllib.error
+import hashlib, hmac, json, os, re, time, urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -28,24 +29,6 @@ _cache = {}          # (owner, repo) -> (monotonic expiry, UTC day, svg)
 CACHE_TTL_SECONDS = 300
 MAX_CACHE_ENTRIES = 256
 MAX_WEBHOOK_BYTES = 1024 * 1024
-_installations = {}  # account_login -> installation_id (learned from webhooks)
-
-# ---------- GitHub App auth ----------
-def _b64(b: bytes) -> str:
-    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
-
-def make_jwt():
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-    key = serialization.load_pem_private_key(
-        open(os.environ["GITHUB_APP_PRIVATE_KEY_PATH"], "rb").read(), password=None)
-    now = int(time.time())
-    header = _b64(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
-    payload = _b64(json.dumps({"iat": now - 60, "exp": now + 540,
-                               "iss": os.environ["GITHUB_APP_ID"]}).encode())
-    signing_input = f"{header}.{payload}".encode()
-    sig = key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
-    return f"{header}.{payload}.{_b64(sig)}"
 
 def api(path, token=None, method="GET", data=None):
     req = urllib.request.Request("https://api.github.com" + path, method=method,
@@ -56,33 +39,6 @@ def api(path, token=None, method="GET", data=None):
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.load(r)
-
-def installation_token(installation_id):
-    return api(f"/app/installations/{installation_id}/access_tokens",
-               token=make_jwt(), method="POST", data={})["token"]
-
-def token_for(owner):
-    if owner in _installations and os.environ.get("GITHUB_APP_ID"):
-        try:
-            return installation_token(_installations[owner])
-        except Exception:
-            pass
-    return os.environ.get("GITHUB_TOKEN")  # fallback (public repos work with none)
-
-# ---------- Manifest (GitHub App manifest flow) ----------
-def manifest():
-    return {
-        "name": APP_NAME,
-        "url": "https://github.com/sa6ag9/repo-vibe",
-        "hook_attributes": {"url": f"{PUBLIC_URL}/webhook"},
-        "redirect_url": f"{PUBLIC_URL}/setup/callback",
-        "public": True,
-        "default_permissions": {
-            "contents": "read", "actions": "read",
-            "metadata": "read", "pull_requests": "read",
-        },
-        "default_events": ["push", "installation", "installation_repositories"],
-    }
 
 # ---------- HTTP ----------
 class H(BaseHTTPRequestHandler):
@@ -168,11 +124,6 @@ class H(BaseHTTPRequestHandler):
                     raise ValueError("invalid event")
         except (ValueError, UnicodeError):
             return self._send(400, "invalid event", "text/plain")
-        if event in ("installation", "installation_repositories"):
-            inst = payload.get("installation", {})
-            acct = (inst.get("account") or {}).get("login")
-            if acct and inst.get("id"):
-                _installations[acct] = inst["id"]
         if event == "push":
             repo = payload.get("repository", {})
             owner = (repo.get("owner") or {}).get("login") or (repo.get("full_name", "/").split("/")[0])

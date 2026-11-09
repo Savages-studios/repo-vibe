@@ -12,6 +12,8 @@ The old GitHub App manifest callback consumed a one-time conversion but discarde
 
 Original baseline: 4 pytest tests passed. The privacy repair finished with 13 passed, 0 failed. A follow-up data-quality repair adds 4 focused regressions: failed or malformed commit details never produce a partial line total, CI lookup failure stays distinct from a successful empty workflow list, and the 30-commit ceiling is labeled as a sample. Current local result: 17 passed, 0 failed. Raw privacy evidence is under evidence/privacy-20261104/ and evidence/data-quality-20261104-local.txt.
 
+2026-11-09 addendum (estate fix program, repo-vibe D1+D2): the retired GitHub App auth machinery — `make_jwt`, `installation_token`, `token_for` (including its `GITHUB_TOKEN` environment fallback) and the `_installations` bookkeeping — and the dead `manifest()` builder were deleted from `app.py`. They had no live callers since the setup routes were retired behind 410 responses; the badge path is public-data-only and now has no token code path at all. The privacy property above ("badge statistics never receive an installation token or environment token") is now structural, and is pinned by `test_server_security.py` (environment-token behavioral check + machinery-absence check). Suite after the removal: see the landing PR.
+
 ## Remaining limits
 
 No hosted deployment, installation, customer or revenue is verified. Public API quota and single-process HTTP serving limit scale. Activity is still capped at 30 daily commits and explicitly labeled as a sample at the cap. Detail-fetch failures now suppress the line total; CI lookup failures now display UNKNOWN. This is a verified privacy and data-quality repair, not completed commercial productization.
