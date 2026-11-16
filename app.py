@@ -16,9 +16,17 @@ token code path left in this file to wire back up.
 
 Config (environment, never committed):
   WEBHOOK_SECRET, PORT (default 8080)
+
+Serving is threaded (ThreadingHTTPServer): the badge path makes a blocking
+upstream GitHub call per uncached request, so a single-threaded server
+serialized every request behind one slow upstream response. The shared
+badge cache is a plain dict; its get/pop/set operations are atomic under
+the GIL, so a race can at worst duplicate an upstream fetch — the privacy
+checks (visibility re-checked on every request) are per-request and
+unaffected.
 """
 import hashlib, hmac, json, os, re, time, urllib.request, urllib.error
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import repo_vibe
@@ -132,7 +140,12 @@ class H(BaseHTTPRequestHandler):
                 _cache.pop((owner, name), None)  # force fresh stats on next badge hit
         self._send(202, "ok", "text/plain")
 
+def make_server(address, handler):
+    server = ThreadingHTTPServer(address, handler)
+    server.daemon_threads = True
+    return server
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
     print(f"Repo-Vibe App server on :{port}  public={PUBLIC_URL}")
-    HTTPServer(("0.0.0.0", port), H).serve_forever()
+    make_server(("0.0.0.0", port), H).serve_forever()
